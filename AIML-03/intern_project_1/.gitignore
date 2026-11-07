@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.log
+data/raw/
+data/processed/*.parquet
+models/**/*.pt
+models/**/*.faiss
+models/**/*.npy
+tf_install*.log

@@ -1,0 +1,4 @@
+# Ignore everything by default; only track explicitly added files
+**
+!*.dvc
+!.gitignore

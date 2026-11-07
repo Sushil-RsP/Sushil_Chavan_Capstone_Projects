@@ -1,0 +1,45 @@
+# MONAI 3D U-Net Segmentation Configuration
+# Medical Segmentation Decathlon — Task06 Lung
+
+task: 3d-segmentation
+dataset: msd-task06-lung
+model_architecture: monai-unet3d
+model_version: "0.1"
+status: pending  # Training not yet run — checkpoint does not exist
+
+modality: CT
+labels:
+  0: background
+  1: lung_tumour
+
+preprocessing:
+  orientation: RAS
+  spacing: [1.5, 1.5, 2.0]  # mm per voxel
+  clip_intensity: [-1000, 400]  # HU range for CT
+  normalise: foreground_mean_std
+
+patch_size: [96, 96, 96]
+num_samples_per_image: 4
+
+training:
+  seed: 42
+  batch_size: 2  # requires ~12 GB VRAM for 96^3 patches
+  epochs: 300
+  optimizer: adam
+  learning_rate: 0.0001
+  checkpoint_dir: models/segmentation/
+
+evaluation:
+  metrics:
+    - dice_score
+    - iou
+
+hardware:
+  minimum_vram_gb: 8
+  recommended_vram_gb: 16
+  cpu_inference: possible_but_slow
+
+warning: >
+  Training requires a GPU with at least 8 GB VRAM and approximately
+  6-12 hours on modern hardware. CPU training is not recommended.
+  Do NOT run segmentation on 2D chest X-ray images.

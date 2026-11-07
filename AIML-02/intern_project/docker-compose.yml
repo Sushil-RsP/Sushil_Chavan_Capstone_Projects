@@ -1,0 +1,78 @@
+# Docker Compose for MedImaging AI Demo
+# For education only — not for clinical use.
+#
+# Prerequisites: Docker Desktop >= 4.0
+# Usage:
+#   cp backend/.env.example backend/.env
+#   docker compose up --build
+#
+# Access:
+#   Frontend:  http://localhost:5173
+#   Backend:   http://localhost:8000
+#   API docs:  http://localhost:8000/docs
+#   Orthanc:   http://localhost:8042  (admin/admin — change in production!)
+
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medimaging-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - ORTHANC_URL=http://orthanc:8042
+      - ORTHANC_MOCK_MODE=false
+      - DB_URL=sqlite+aiosqlite:///./data/app.db
+    volumes:
+      - backend-data:/app/data
+      - backend-models:/app/models
+      - backend-uploads:/app/uploads
+    depends_on:
+      orthanc:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medimaging-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  orthanc:
+    image: orthancteam/orthanc:24.5.3
+    container_name: medimaging-orthanc
+    ports:
+      - "8042:8042"
+      - "4242:4242"   # DICOM port
+    volumes:
+      - orthanc-storage:/var/lib/orthanc/db
+      - ./deployment/orthanc.json:/etc/orthanc/orthanc.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8042/system"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-models:
+  backend-uploads:
+  orthanc-storage:

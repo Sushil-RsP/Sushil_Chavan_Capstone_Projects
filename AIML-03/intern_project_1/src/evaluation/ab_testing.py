@@ -1,0 +1,141 @@
+import os
+import sys
+import math
+import json
+import time
+import hashlib
+import numpy as np
+from scipy import stats
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+class ABTestingManager:
+    def __init__(self, experiment_name="ranking_model_dcn_vs_widedeep"):
+        self.experiment_name = experiment_name
+        self.variants = {
+            "variant_A": {"model": "wide_deep", "name": "Wide & Deep (Baseline)"},
+            "variant_B": {"model": "dcn", "name": "DCN-v2 (Deep & Cross)"}
+        }
+        self.telemetry = {
+            "variant_A": {"impressions": 0, "clicks": 0, "conversions": 0, "latencies_ms": []},
+            "variant_B": {"impressions": 0, "clicks": 0, "conversions": 0, "latencies_ms": []}
+        }
+
+    def assign_variant(self, user_id):
+        hash_input = f"{self.experiment_name}:{user_id}".encode("utf-8")
+        hash_val = int(hashlib.md5(hash_input).hexdigest(), 16)
+        bucket = hash_val % 100
+        return "variant_A" if bucket < 50 else "variant_B"
+
+    def record_impression(self, variant, latency_ms):
+        if variant in self.telemetry:
+            self.telemetry[variant]["impressions"] += 1
+            self.telemetry[variant]["latencies_ms"].append(float(latency_ms))
+
+    def record_event(self, variant, event_type="click"):
+        if variant in self.telemetry:
+            if event_type == "click":
+                self.telemetry[variant]["clicks"] += 1
+            elif event_type == "conversion":
+                self.telemetry[variant]["conversions"] += 1
+
+    def compute_statistics(self):
+        data_a = self.telemetry["variant_A"]
+        data_b = self.telemetry["variant_B"]
+
+        imp_a = max(1, data_a["impressions"])
+        imp_b = max(1, data_b["impressions"])
+        clk_a = data_a["clicks"]
+        clk_b = data_b["clicks"]
+
+        prop_a = min(1.0, max(0.0, clk_a / imp_a))
+        prop_b = min(1.0, max(0.0, clk_b / imp_b))
+
+        relative_uplift_ctr = ((prop_b - prop_a) / prop_a * 100.0) if prop_a > 0 else 0.0
+
+        total_clicks = clk_a + clk_b
+        total_impressions = imp_a + imp_b
+        p_pooled = min(1.0, max(0.0, total_clicks / total_impressions)) if total_impressions > 0 else 0.0
+
+        var_pooled = max(0.0, p_pooled * (1.0 - p_pooled) * (1.0 / imp_a + 1.0 / imp_b))
+        se_pooled = math.sqrt(var_pooled) if var_pooled > 1e-12 else 1e-6
+        z_stat = (prop_b - prop_a) / se_pooled
+
+        p_value = 2.0 * (1.0 - stats.norm.cdf(abs(z_stat)))
+
+        var_a = (prop_a * (1.0 - prop_a) / imp_a) if 0.0 < prop_a < 1.0 else 0.0
+        var_b = (prop_b * (1.0 - prop_b) / imp_b) if 0.0 < prop_b < 1.0 else 0.0
+        var_diff = max(0.0, var_a + var_b)
+        se_diff = math.sqrt(var_diff) if var_diff > 1e-12 else 1e-6
+
+        margin_error = 1.96 * se_diff
+        diff = prop_b - prop_a
+        ci_lower = max(-1.0, diff - margin_error)
+        ci_upper = min(1.0, diff + margin_error)
+
+        is_significant = p_value < 0.05
+
+        return {
+            "experiment": self.experiment_name,
+            "variant_A": {
+                "name": self.variants["variant_A"]["name"],
+                "impressions": imp_a,
+                "clicks": clk_a,
+                "ctr": round(prop_a, 4),
+                "median_latency_ms": round(float(np.median(data_a["latencies_ms"])), 2) if data_a["latencies_ms"] else 0.0
+            },
+            "variant_B": {
+                "name": self.variants["variant_B"]["name"],
+                "impressions": imp_b,
+                "clicks": clk_b,
+                "ctr": round(prop_b, 4),
+                "median_latency_ms": round(float(np.median(data_b["latencies_ms"])), 2) if data_b["latencies_ms"] else 0.0
+            },
+            "analysis": {
+                "relative_ctr_uplift_pct": round(relative_uplift_ctr, 2),
+                "z_statistic": round(float(z_stat), 4),
+                "p_value": round(float(p_value), 5),
+                "statistically_significant": bool(is_significant),
+                "confidence_level": "95%",
+                "ci_lower_diff": round(ci_lower, 5),
+                "ci_upper_diff": round(ci_upper, 5),
+                "conclusion": (
+                    f"Variant B (DCN-v2) demonstrates a statistically significant CTR lift of {relative_uplift_ctr:.2f}% (p={p_value:.4f} < 0.05)"
+                    if is_significant and relative_uplift_ctr > 0
+                    else "No statistically significant difference detected yet between variants (p >= 0.05)."
+                )
+            }
+        }
+
+def simulate_online_ab_traffic(n_users=600):
+    from src.serving.pipeline import RecommendationPipeline
+    pipeline = RecommendationPipeline()
+    ab_manager = ABTestingManager()
+
+    user_ids = list(pipeline.user_meta.keys())
+    np.random.seed(42)
+    for i in range(n_users):
+        uid = int(np.random.choice(user_ids))
+        variant = ab_manager.assign_variant(uid)
+        model_name = ab_manager.variants[variant]["model"]
+
+        t0 = time.perf_counter()
+        resp = pipeline.recommend(uid, top_k=10, candidate_k=100, ranking_model=model_name, bypass_cache=True)
+        lat = (time.perf_counter() - t0) * 1000.0
+
+        ab_manager.record_impression(variant, lat)
+
+        recs = resp["recommendations"]
+        for rank, item in enumerate(recs[:5], start=1):
+            pred_score = item.get("predicted_ctr", 0.5)
+            view_prob = 1.0 / math.log2(rank + 1)
+            click_prob = pred_score * view_prob
+            if np.random.rand() < click_prob:
+                ab_manager.record_event(variant, event_type="click")
+                if np.random.rand() < 0.25:
+                    ab_manager.record_event(variant, event_type="conversion")
+                break
+
+    return ab_manager.compute_statistics()

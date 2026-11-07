@@ -1,0 +1,25 @@
+{
+  "Name": "MedImaging Demo Orthanc",
+  "StorageDirectory": "/var/lib/orthanc/db",
+  "IndexDirectory": "/var/lib/orthanc/db",
+  "StorageCompression": false,
+  "MaximumStorageSize": 2048,
+  "MaximumPatientCount": 0,
+  "DeidentifyLogs": true,
+  "HttpServerEnabled": true,
+  "HttpPort": 8042,
+  "AuthenticationEnabled": true,
+  "RegisteredUsers": {
+    "orthanc": "changeme_in_production"
+  },
+  "DicomServerEnabled": true,
+  "DicomPort": 4242,
+  "DicomAet": "MEDIMAGING",
+  "DicomCheckCalledAet": false,
+  "RemoteAccessAllowed": true,
+  "SslEnabled": false,
+  "LuaScriptsAtStartup": [],
+  "Plugins": [],
+  "LogExportedResources": false,
+  "KeepAlive": true
+}
